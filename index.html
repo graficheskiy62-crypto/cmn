@@ -112,6 +112,35 @@
             justify-content: center;
             align-items: center;
             background: #000;
+            position: relative;
+        }
+
+        #webcam-container canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* Сообщение о статусе камеры */
+        #camera-status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            padding: 20px;
+            z-index: 10;
+        }
+
+        .status-icon {
+            font-size: 64px;
+            margin-bottom: 10px;
+        }
+
+        .status-text {
+            font-size: 14px;
+            color: #aaa;
+            max-width: 200px;
         }
 
         /* Анимация рамки камеры во время отсчёта */
@@ -133,12 +162,13 @@
         }
 
         #result-text {
-            font-size: 32px;
+            font-size: 24px;
             font-weight: bold;
             min-height: 50px;
             margin: 15px 0;
             text-align: center;
             color: #fff;
+            padding: 0 20px;
         }
 
         /* --- Кнопки управления --- */
@@ -146,11 +176,13 @@
             display: flex;
             gap: 15px;
             margin-top: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         button {
             padding: 15px 35px;
-            font-size: 20px;
+            font-size: 18px;
             background-color: #bb86fc;
             color: #121212;
             border: none;
@@ -184,6 +216,15 @@
             background-color: #b55464;
         }
 
+        #retry-btn {
+            background-color: #03dac6;
+            margin-top: 10px;
+        }
+
+        #retry-btn:hover {
+            background-color: #02b8a7;
+        }
+
         /* --- Анимация при победе --- */
         .win-anim {
             animation: winPulse 1s ease-in-out;
@@ -193,6 +234,22 @@
             0% { transform: scale(1); filter: drop-shadow(0 0 0px gold); }
             50% { transform: scale(1.3); filter: drop-shadow(0 0 30px gold); }
             100% { transform: scale(1); filter: drop-shadow(0 0 0px gold); }
+        }
+
+        /* --- Индикатор загрузки --- */
+        .loader {
+            border: 4px solid #333;
+            border-top: 4px solid #bb86fc;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
 
         /* --- Адаптивность для мобильных устройств --- */
@@ -216,6 +273,9 @@
                 gap: 10px;
                 align-items: center;
             }
+            #result-text {
+                font-size: 18px;
+            }
         }
     </style>
 </head>
@@ -232,7 +292,7 @@
     <div id="game-area">
         <div class="choice-box">
             <h2>Игрок</h2>
-            <div id="player-choice" class="emoji">❓</div>
+            <div id="player-choice" class="emoji">👋</div>
         </div>
         <div class="vs">VS</div>
         <div class="choice-box">
@@ -245,11 +305,17 @@
     <div id="result-text">Нажмите "Начать игру"</div>
 
     <!-- Сюда будет добавлено видео с камеры -->
-    <div id="webcam-container"></div>
+    <div id="webcam-container">
+        <div id="camera-status">
+            <div class="status-icon">📷</div>
+            <div class="status-text">Камера отключена</div>
+        </div>
+    </div>
 
     <div class="controls">
         <button id="start-btn" onclick="startGame()">Начать игру</button>
         <button id="stop-btn" onclick="stopGame()" style="display: none;">Остановить</button>
+        <button id="retry-btn" onclick="retryCamera()" style="display: none;">🔄 Повторить подключение</button>
     </div>
 
     <script>
@@ -259,6 +325,7 @@
         let model, webcam;
         let playerScore = 0, compScore = 0;
         let isRunning = false;
+        let cameraReady = false;
 
         // Сопоставление названий классов модели с эмодзи
         const emojis = {
@@ -268,21 +335,105 @@
             "Пусто": "❓"
         };
 
+        // Показ статуса камеры
+        function showCameraStatus(icon, text, isError = false) {
+            const container = document.getElementById("webcam-container");
+            const statusDiv = document.getElementById("camera-status");
+            
+            if (!statusDiv) {
+                const newStatus = document.createElement("div");
+                newStatus.id = "camera-status";
+                newStatus.innerHTML = `
+                    <div class="status-icon">${icon}</div>
+                    <div class="status-text">${text}</div>
+                `;
+                container.appendChild(newStatus);
+            } else {
+                statusDiv.innerHTML = `
+                    <div class="status-icon">${icon}</div>
+                    <div class="status-text">${text}</div>
+                `;
+                statusDiv.style.color = isError ? "#cf6679" : "#03dac6";
+            }
+        }
+
+        function hideCameraStatus() {
+            const statusDiv = document.getElementById("camera-status");
+            if (statusDiv) {
+                statusDiv.style.display = "none";
+            }
+        }
+
         // Инициализация модели и веб-камеры
         async function init() {
-            const modelURL = URL + "model.json";
-            const metadataURL = URL + "metadata.json";
+            try {
+                showCameraStatus("⏳", "Загрузка модели ИИ...");
+                
+                const modelURL = URL + "model.json";
+                const metadataURL = URL + "metadata.json";
 
-            // Загрузка модели и метаданных
-            model = await tmImage.load(modelURL, metadataURL);
+                // Загрузка модели и метаданных
+                model = await tmImage.load(modelURL, metadataURL);
+                console.log("✅ Модель загружена");
+                
+                showCameraStatus("📷", "Запрос доступа к камере...");
+                
+                // Настройка камеры (ширина, высота, зеркальное отображение для удобства)
+                webcam = new tmImage.Webcam(250, 250, true); 
+                await webcam.setup(); 
+                await webcam.play();
+                
+                console.log("✅ Камера активирована");
+                cameraReady = true;
+                
+                // Добавление видеопотока (canvas) на страницу
+                const container = document.getElementById("webcam-container");
+                // Очищаем контейнер
+                container.innerHTML = "";
+                container.appendChild(webcam.canvas);
+                
+                return true;
+            } catch (error) {
+                console.error("❌ Ошибка инициализации:", error);
+                cameraReady = false;
+                
+                let errorMessage = "Неизвестная ошибка";
+                if (error.name === "NotAllowedError" || error.message.includes("permission")) {
+                    errorMessage = "❌ Доступ к камере запрещён. Разрешите доступ в настройках браузера.";
+                } else if (error.name === "NotFoundError" || error.message.includes("not found")) {
+                    errorMessage = "❌ Камера не найдена. Подключите камеру.";
+                } else if (error.name === "NotReadableError" || error.message.includes("readable")) {
+                    errorMessage = "❌ Камера занята другим приложением.";
+                } else if (location.protocol !== "https:" && location.hostname !== "localhost") {
+                    errorMessage = "❌ Для работы камеры нужен HTTPS. Используйте localhost или HTTPS.";
+                }
+                
+                showCameraStatus("❌", errorMessage, true);
+                throw error;
+            }
+        }
+
+        // Повторная попытка подключения камеры
+        async function retryCamera() {
+            document.getElementById('retry-btn').style.display = 'none';
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('start-btn').innerText = "Подключение...";
             
-            // Настройка камеры (ширина, высота, зеркальное отображение для удобства)
-            webcam = new tmImage.Webcam(250, 250, true); 
-            await webcam.setup(); 
-            await webcam.play();
-            
-            // Добавление видеопотока (canvas) на страницу
-            document.getElementById("webcam-container").appendChild(webcam.canvas);
+            try {
+                // Очищаем предыдущие элементы
+                const container = document.getElementById("webcam-container");
+                container.innerHTML = '<div id="camera-status"></div>';
+                
+                await init();
+                document.getElementById('start-btn').disabled = false;
+                document.getElementById('start-btn').innerText = "Начать игру";
+                showCameraStatus("✅", "Камера готова!", false);
+                setTimeout(() => hideCameraStatus(), 2000);
+            } catch (e) {
+                document.getElementById('start-btn').disabled = false;
+                document.getElementById('start-btn').innerText = "Начать игру";
+                document.getElementById('retry-btn').style.display = 'inline-block';
+            }
         }
 
         // Запуск игры
@@ -302,31 +453,35 @@
                 startBtn.style.display = 'none';
                 stopBtn.style.display = 'inline-block';
                 document.getElementById('result-text').innerText = "Приготовьтесь!";
+                document.getElementById('player-choice').innerText = "👋";
+                document.getElementById('computer-choice').innerText = "❓";
                 gameLoop();
             } catch (e) {
                 console.error(e);
-                document.getElementById('result-text').innerText = "Ошибка доступа к камере или загрузки модели!";
+                document.getElementById('result-text').innerText = "Ошибка подключения камеры";
                 startBtn.disabled = false;
                 startBtn.innerText = "Начать игру";
+                document.getElementById('retry-btn').style.display = 'inline-block';
             }
         }
 
         // Остановка игры
         function stopGame() {
             isRunning = false;
-            webcam.stop();
+            if (webcam) {
+                webcam.stop();
+            }
             document.getElementById('start-btn').style.display = 'inline-block';
             document.getElementById('start-btn').disabled = false;
             document.getElementById('start-btn').innerText = "Начать игру";
             document.getElementById('stop-btn').style.display = 'none';
             document.getElementById('result-text').innerText = "Игра остановлена.";
             document.getElementById('timer').innerText = "";
+            document.getElementById('player-choice').innerText = "👋";
+            document.getElementById('computer-choice').innerText = "❓";
             
-            // Очистка контейнера камеры
-            const camContainer = document.getElementById("webcam-container");
-            while (camContainer.firstChild) {
-                camContainer.removeChild(camContainer.firstChild);
-            }
+            // Показываем статус вместо камеры
+            showCameraStatus("⏸️", "Камера остановлена");
         }
 
         // Вспомогательная функция для задержки (аналог sleep)
@@ -352,26 +507,33 @@
                 camContainer.classList.remove('recording');
 
                 // Распознавание жеста
-                const prediction = await model.predict(webcam.canvas);
-                
-                let maxProb = 0;
-                let maxClass = "Пусто";
-                
-                // Ищем класс с максимальной вероятностью
-                for (let p of prediction) {
-                    if (p.probability > maxProb) {
-                        maxProb = p.probability;
-                        maxClass = p.className;
+                try {
+                    const prediction = await model.predict(webcam.canvas);
+                    
+                    let maxProb = 0;
+                    let maxClass = "Пусто";
+                    
+                    // Ищем класс с максимальной вероятностью
+                    for (let p of prediction) {
+                        if (p.probability > maxProb) {
+                            maxProb = p.probability;
+                            maxClass = p.className;
+                        }
                     }
-                }
 
-                // Обработка результата распознавания
-                if (maxClass !== "Пусто") {
-                    playRound(maxClass);
-                } else {
-                    document.getElementById('result-text').innerText = "Жест не распознан. Попробуй еще раз!";
-                    document.getElementById('player-choice').innerText = "❓";
-                    document.getElementById('computer-choice').innerText = "❓";
+                    console.log("Распознано:", maxClass, "Вероятность:", maxProb);
+
+                    // Обработка результата распознавания
+                    if (maxClass !== "Пусто" && maxProb > 0.5) {
+                        playRound(maxClass);
+                    } else {
+                        document.getElementById('result-text').innerText = "Жест не распознан. Попробуй еще раз!";
+                        document.getElementById('player-choice').innerText = "❓";
+                        document.getElementById('computer-choice').innerText = "❓";
+                    }
+                } catch (error) {
+                    console.error("Ошибка предсказания:", error);
+                    document.getElementById('result-text').innerText = "Ошибка распознавания";
                 }
 
                 timerEl.innerText = "";
@@ -386,7 +548,7 @@
             const compChoice = choices[Math.floor(Math.random() * 3)];
 
             // Отображаем выборы на экране
-            document.getElementById('player-choice').innerText = emojis[playerChoice];
+            document.getElementById('player-choice').innerText = emojis[playerChoice] || "❓";
             document.getElementById('computer-choice').innerText = emojis[compChoice];
 
             let result = "";
@@ -423,6 +585,14 @@
             void el.offsetWidth; 
             el.classList.add('win-anim');
         }
+
+        // Проверка HTTPS при загрузке страницы
+        window.addEventListener('load', () => {
+            if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+                console.warn("⚠️ Камера требует HTTPS или localhost");
+                document.getElementById('result-text').innerText = "⚠️ Для работы камеры нужен HTTPS";
+            }
+        });
     </script>
 </body>
 </html>
