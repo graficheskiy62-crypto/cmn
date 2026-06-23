@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Камень, Ножницы, Бумага с ИИ</title>
+    
+    <!-- Подключаем TensorFlow.js и библиотеку Teachable Machine -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+    
+    <style>
+        /* --- Базовые стили и тёмная тема --- */
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            color: #bb86fc;
+            text-shadow: 0 0 15px rgba(187, 134, 252, 0.5);
+            margin-bottom: 5px;
+            text-align: center;
+        }
+
+        p.subtitle {
+            color: #aaa;
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+
+        /* --- Табло счёта --- */
+        #scoreboard {
+            font-size: 24px;
+            display: flex;
+            gap: 40px;
+            margin-bottom: 20px;
+        }
+
+        .score-item {
+            background: #2c2c2c;
+            padding: 10px 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+        }
+
+        .score-item span {
+            color: #03dac6;
+            font-weight: bold;
+        }
+
+        /* --- Игровая зона (Игрок vs Компьютер) --- */
+        #game-area {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            width: 100%;
+            max-width: 800px;
+            margin: 20px 0;
+            gap: 20px;
+        }
+
+        .choice-box {
+            text-align: center;
+            background: #1f1f1f;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            flex: 1;
+            max-width: 250px;
+        }
+
+        .choice-box h2 {
+            margin: 0 0 10px 0;
+            color: #03dac6;
+        }
+
+        /* Крупные символы жестов */
+        .emoji {
+            font-size: 120px;
+            line-height: 1.2;
+            margin: 10px 0;
+            transition: all 0.3s ease;
+        }
+
+        .vs {
+            font-size: 48px;
+            font-weight: bold;
+            color: #bb86fc;
+            text-shadow: 0 0 10px rgba(187, 134, 252, 0.5);
+        }
+
+        /* --- Контейнер для камеры --- */
+        #webcam-container {
+            margin: 20px 0;
+            border-radius: 50%;
+            overflow: hidden;
+            border: 5px solid #333;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            transition: border-color 0.3s, box-shadow 0.3s;
+            width: 250px;
+            height: 250px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+        }
+
+        /* Анимация рамки камеры во время отсчёта */
+        .recording {
+            border-color: #cf6679 !important;
+            box-shadow: 0 0 30px rgba(207, 102, 121, 0.6) !important;
+        }
+
+        /* --- Таймер и результаты --- */
+        #timer {
+            font-size: 72px;
+            font-weight: bold;
+            color: #cf6679;
+            height: 90px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-shadow: 0 0 15px rgba(207, 102, 121, 0.5);
+        }
+
+        #result-text {
+            font-size: 32px;
+            font-weight: bold;
+            min-height: 50px;
+            margin: 15px 0;
+            text-align: center;
+            color: #fff;
+        }
+
+        /* --- Кнопки управления --- */
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        button {
+            padding: 15px 35px;
+            font-size: 20px;
+            background-color: #bb86fc;
+            color: #121212;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s, transform 0.1s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        button:hover {
+            background-color: #9d67db;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        button:disabled {
+            background-color: #555;
+            color: #888;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        #stop-btn {
+            background-color: #cf6679;
+        }
+
+        #stop-btn:hover {
+            background-color: #b55464;
+        }
+
+        /* --- Анимация при победе --- */
+        .win-anim {
+            animation: winPulse 1s ease-in-out;
+        }
+
+        @keyframes winPulse {
+            0% { transform: scale(1); filter: drop-shadow(0 0 0px gold); }
+            50% { transform: scale(1.3); filter: drop-shadow(0 0 30px gold); }
+            100% { transform: scale(1); filter: drop-shadow(0 0 0px gold); }
+        }
+
+        /* --- Адаптивность для мобильных устройств --- */
+        @media (max-width: 600px) {
+            #game-area {
+                flex-direction: column;
+            }
+            .vs {
+                transform: rotate(90deg);
+                margin: -10px 0;
+            }
+            .emoji {
+                font-size: 90px;
+            }
+            #webcam-container {
+                width: 200px;
+                height: 200px;
+            }
+            #scoreboard {
+                flex-direction: column;
+                gap: 10px;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Камень, Ножницы, Бумага</h1>
+    <p class="subtitle">Игра против ИИ с распознаванием жестов</p>
+    
+    <div id="scoreboard">
+        <div class="score-item">Игрок: <span id="player-score">0</span></div>
+        <div class="score-item">Компьютер: <span id="computer-score">0</span></div>
+    </div>
+
+    <div id="game-area">
+        <div class="choice-box">
+            <h2>Игрок</h2>
+            <div id="player-choice" class="emoji">❓</div>
+        </div>
+        <div class="vs">VS</div>
+        <div class="choice-box">
+            <h2>Компьютер</h2>
+            <div id="computer-choice" class="emoji">❓</div>
+        </div>
+    </div>
+
+    <div id="timer"></div>
+    <div id="result-text">Нажмите "Начать игру"</div>
+
+    <!-- Сюда будет добавлено видео с камеры -->
+    <div id="webcam-container"></div>
+
+    <div class="controls">
+        <button id="start-btn" onclick="startGame()">Начать игру</button>
+        <button id="stop-btn" onclick="stopGame()" style="display: none;">Остановить</button>
+    </div>
+
+    <script>
+        // Ссылка на вашу модель Teachable Machine
+        const URL = "https://teachablemachine.withgoogle.com/models/bRQ8b1Usy/";
+        
+        let model, webcam;
+        let playerScore = 0, compScore = 0;
+        let isRunning = false;
+
+        // Сопоставление названий классов модели с эмодзи
+        const emojis = {
+            "Камень": "✊",
+            "Ножницы": "✌️",
+            "Бумага": "✋",
+            "Пусто": "❓"
+        };
+
+        // Инициализация модели и веб-камеры
+        async function init() {
+            const modelURL = URL + "model.json";
+            const metadataURL = URL + "metadata.json";
+
+            // Загрузка модели и метаданных
+            model = await tmImage.load(modelURL, metadataURL);
+            
+            // Настройка камеры (ширина, высота, зеркальное отображение для удобства)
+            webcam = new tmImage.Webcam(250, 250, true); 
+            await webcam.setup(); 
+            await webcam.play();
+            
+            // Добавление видеопотока (canvas) на страницу
+            document.getElementById("webcam-container").appendChild(webcam.canvas);
+        }
+
+        // Запуск игры
+        async function startGame() {
+            if (isRunning) return;
+            
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            
+            startBtn.disabled = true;
+            startBtn.innerText = "Загрузка...";
+            document.getElementById('result-text').innerText = "Инициализация ИИ и камеры...";
+
+            try {
+                await init();
+                isRunning = true;
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                document.getElementById('result-text').innerText = "Приготовьтесь!";
+                gameLoop();
+            } catch (e) {
+                console.error(e);
+                document.getElementById('result-text').innerText = "Ошибка доступа к камере или загрузки модели!";
+                startBtn.disabled = false;
+                startBtn.innerText = "Начать игру";
+            }
+        }
+
+        // Остановка игры
+        function stopGame() {
+            isRunning = false;
+            webcam.stop();
+            document.getElementById('start-btn').style.display = 'inline-block';
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').innerText = "Начать игру";
+            document.getElementById('stop-btn').style.display = 'none';
+            document.getElementById('result-text').innerText = "Игра остановлена.";
+            document.getElementById('timer').innerText = "";
+            
+            // Очистка контейнера камеры
+            const camContainer = document.getElementById("webcam-container");
+            while (camContainer.firstChild) {
+                camContainer.removeChild(camContainer.firstChild);
+            }
+        }
+
+        // Вспомогательная функция для задержки (аналог sleep)
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Основной цикл игры
+        async function gameLoop() {
+            const timerEl = document.getElementById('timer');
+            const camContainer = document.getElementById("webcam-container");
+
+            while (isRunning) {
+                // Обратный отсчёт 3 секунды перед сканированием
+                for (let i = 3; i > 0; i--) {
+                    timerEl.innerText = i;
+                    camContainer.classList.add('recording'); // Подсвечиваем камеру красным
+                    await sleep(1000);
+                }
+                
+                timerEl.innerText = "📸";
+                await sleep(300); // Небольшая пауза для эффекта "фото"
+                camContainer.classList.remove('recording');
+
+                // Распознавание жеста
+                const prediction = await model.predict(webcam.canvas);
+                
+                let maxProb = 0;
+                let maxClass = "Пусто";
+                
+                // Ищем класс с максимальной вероятностью
+                for (let p of prediction) {
+                    if (p.probability > maxProb) {
+                        maxProb = p.probability;
+                        maxClass = p.className;
+                    }
+                }
+
+                // Обработка результата распознавания
+                if (maxClass !== "Пусто") {
+                    playRound(maxClass);
+                } else {
+                    document.getElementById('result-text').innerText = "Жест не распознан. Попробуй еще раз!";
+                    document.getElementById('player-choice').innerText = "❓";
+                    document.getElementById('computer-choice').innerText = "❓";
+                }
+
+                timerEl.innerText = "";
+                // Сразу переходим к следующему кругу. 
+                // Результат предыдущего раунда будет виден пользователю все 3 секунды нового отсчёта.
+            }
+        }
+
+        // Логика одного раунда
+        function playRound(playerChoice) {
+            const choices = ["Камень", "Ножницы", "Бумага"];
+            const compChoice = choices[Math.floor(Math.random() * 3)];
+
+            // Отображаем выборы на экране
+            document.getElementById('player-choice').innerText = emojis[playerChoice];
+            document.getElementById('computer-choice').innerText = emojis[compChoice];
+
+            let result = "";
+            
+            // Определение победителя по классическим правилам
+            if (playerChoice === compChoice) {
+                result = "Ничья! 🤝";
+            } else if (
+                (playerChoice === "Камень" && compChoice === "Ножницы") ||
+                (playerChoice === "Ножницы" && compChoice === "Бумага") ||
+                (playerChoice === "Бумага" && compChoice === "Камень")
+            ) {
+                result = "Вы победили! 🎉";
+                playerScore++;
+                triggerWinAnimation('player-choice');
+            } else {
+                result = "Компьютер победил! 🤖";
+                compScore++;
+                triggerWinAnimation('computer-choice');
+            }
+
+            // Обновляем счёт и текст результата
+            document.getElementById('result-text').innerText = result;
+            document.getElementById('player-score').innerText = playerScore;
+            document.getElementById('computer-score').innerText = compScore;
+        }
+
+        // Запуск анимации победы (пульсация и золотое свечение)
+        function triggerWinAnimation(elementId) {
+            const el = document.getElementById(elementId);
+            el.classList.remove('win-anim');
+            
+            // Триггерим reflow, чтобы анимация запустилась заново, если она уже была активна
+            void el.offsetWidth; 
+            el.classList.add('win-anim');
+        }
+    </script>
+</body>
+</html>
